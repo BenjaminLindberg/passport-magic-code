@@ -1,14 +1,16 @@
 {
-  "name": "passport-otp",
+  "name": "passport-magic-code",
   "version": "1.0.0",
-  "description": "A passport strategy to send a OTP (One time password) to let the user authenticate themselves.",
+  "description": "A passwordless passport strategy to send a magic code (One time password) to let the user authenticate themselves.",
   "keywords": [
     "Passport",
     "Authentication",
     "otp",
     "OneTimePassword",
     "PassportStrategy",
-    "LoginStrategy"
+    "LoginStrategy",
+    "MagicLogin",
+    "MagicCode"
   ],
   "main": "index.js",
   "files": [
