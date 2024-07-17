@@ -1,6 +1,5 @@
 import { randomInt } from "crypto";
 import { Request } from "express";
-import { sign, verify } from "jsonwebtoken";
 import PassportStrategy from "passport-strategy";
 import { z } from "zod";
 import { MemoryStorageSchema, memoryStorage } from "./memoryStorage";
@@ -9,18 +8,17 @@ export const ArgsSchema = z.object({
   secret: z.string().min(16, {
     message: "Secret must be at least 16 characters long",
   }),
-  codeLength: z.number().gte(4).optional().default(4),
-  requiredFields: z.array(z.string()),
-  storage: MemoryStorageSchema.optional().default(memoryStorage),
-  expiresIn: z.string(),
-  tokenField: z.string().optional().default("token"),
-  codeField: z.string().optional().default("code"),
-  userPrimaryKey: z.string().optional().default("email"),
+  codeLength: z.number().gte(4).default(4),
+  requiredFields: z.array(z.string()).default(["email"]),
+  storage: MemoryStorageSchema.default(memoryStorage),
+  expiresIn: z.number().default(30) /* Miunutes */,
+  codeField: z.string().default("code"),
+  userPrimaryKey: z.string().default("email"),
 });
 
 export const SendCodeFunctionSchema = z
   .function()
-  .args(z.string(), z.string())
+  .args(z.string(), z.number())
   .returns(z.void().or(z.promise(z.void())));
 
 export const VerifyUserFunctionSchema = z
@@ -38,20 +36,28 @@ export const OptionsSchema = z.object({
   action: z.enum(["request", "accept"] as const),
 });
 
-export type Args = z.infer<typeof ArgsSchema>;
+const ArgTypeSchema = ArgsSchema.partial().required({
+  secret: true,
+});
+
+export type Args = z.infer<typeof ArgTypeSchema>;
 export type SendCodeFunction = z.infer<typeof SendCodeFunctionSchema>;
 export type VerifyUserFunction = z.infer<typeof VerifyUserFunctionSchema>;
 export type Options = z.infer<typeof OptionsSchema>;
 
 class MagicCodeStrategy extends PassportStrategy.Strategy {
   name: string;
-  args: Args;
+  args: z.infer<typeof ArgsSchema>;
   sendCode: SendCodeFunction;
   verifyUser: VerifyUserFunction;
 
-  constructor({ ...args }: Args, sendCode: () => void, verifyUser: () => any) {
+  constructor(
+    args: Args,
+    sendCode: SendCodeFunction,
+    verifyUser: VerifyUserFunction
+  ) {
     const parsedArguments = StrategySchema.safeParse([
-      { args },
+      args,
       sendCode,
       verifyUser,
     ]);
@@ -82,29 +88,26 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
     }
 
     if (options.action === "accept") {
-      return this.requestCode(req, options);
+      return this.acceptCode(req, options);
     }
 
     return this.error(new Error("Unknown action"));
   }
 
-  async requestCode(req: Request, options: z.infer<typeof OptionsSchema>) {
-    if (this.args?.requiredFields) {
-      const parsedBody = z
-        .object({
-          ...this.args.requiredFields.reduce(
-            (acc, cur) => ({
-              ...acc,
-              [cur]: z.any(),
-            }),
-            {}
-          ),
-        })
-        .strip()
-        .safeParse(req.body);
+  async requestCode(req: Request, options: Options) {
+    const parsedBody = z
+      .object({
+        ...this.args.requiredFields.concat([this.args.userPrimaryKey]).reduce(
+          (acc, cur) => ({
+            ...acc,
+            [cur]: z.any(),
+          }),
+          {}
+        ),
+      })
+      .safeParse(req.body);
 
-      if (!parsedBody.success) throw new Error(parsedBody.error.message);
-    }
+    if (!parsedBody.success) this.fail(parsedBody.error, 400);
 
     let user = req.body;
 
@@ -113,49 +116,45 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
       10 ** this.args.codeLength - 1
     );
 
-    let jwtToken: string | undefined;
+    this.sendCode(user[this.args.userPrimaryKey], code);
 
-    try {
-      jwtToken = await sign(
-        {
-          code,
-          user,
-        },
-        this.args.secret,
-        {
-          expiresIn: this.args.expiresIn,
-        }
-      );
-    } catch (err: unknown) {
-      return this.error(err as Error);
-    }
-
-    this.sendCode(user[this.args.userPrimaryKey], jwtToken);
+    this.args.storage.set(user[this.args.userPrimaryKey], {
+      ...(await this.args.storage.get(user[this.args.userPrimaryKey])),
+      [code.toString()]: {
+        expiresIn: (Date.now() + this.args.expiresIn * 60 * 1000) / 1,
+        user: user,
+      },
+    });
 
     return this.pass();
   }
 
-  async acceptCode(req: Request, options: z.infer<typeof OptionsSchema>) {
-    const jwtToken =
-      req.body[this.args.tokenField] ||
-      req.query[this.args.tokenField] ||
-      req.params[this.args.tokenField];
+  async acceptCode(req: Request, options: Options) {
+    const code: string | undefined = (
+      (req.body &&
+        this.args.codeField in req.body &&
+        req.body[this.args.codeField]) ||
+      (req.query &&
+        this.args.codeField in req.query &&
+        req.query[this.args.codeField]) ||
+      (req.params &&
+        this.args.codeField in req.params &&
+        req.params[this.args.codeField])
+    )?.toString();
 
-    const enteredCode =
-      req.body[this.args.codeField] ||
-      req.query[this.args.codeField] ||
-      req.params[this.args.codeField];
+    const userUID: string | undefined = (
+      (req.body &&
+        this.args.userPrimaryKey in req.body &&
+        req.body[this.args.userPrimaryKey]) ||
+      (req.query &&
+        this.args.userPrimaryKey in req.query &&
+        req.query[this.args.userPrimaryKey]) ||
+      (req.params &&
+        this.args.userPrimaryKey in req.params &&
+        req.params[this.args.userPrimaryKey])
+    )?.toString();
 
-    if (!jwtToken) {
-      return this.fail(
-        {
-          message: "Token missing",
-        },
-        404
-      );
-    }
-
-    if (!enteredCode) {
+    if (!code) {
       return this.fail(
         {
           message: "The code is missing.",
@@ -164,64 +163,44 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
       );
     }
 
-    let code: number | undefined;
-    let user;
-    let exp;
-
-    try {
-      const verifiedToken = (await verify(jwtToken, this.args.secret)) as
-        | {
-            code: number;
-            user: any;
-            exp: any;
-          }
-        | undefined;
-
-      code = verifiedToken?.code;
-      user = verifiedToken?.user;
-      exp = verifiedToken?.exp;
-    } catch (err: unknown) {
-      return this.fail({ message: (err as Error).message }, 500);
-    }
-
-    if (code !== enteredCode) {
+    if (!userUID) {
       return this.fail(
         {
-          message:
-            "The code that's been entered does not match the original code.",
+          message: "The user primary key is missing.",
         },
-        401
+        404
       );
     }
 
-    user = await this.verifyUser(user);
+    const tokens = (await this.args.storage.get(userUID)) || {};
 
-    const userUID = user[this.args.userPrimaryKey];
-
-    const usedTokens: any = (await this.args.storage.get(userUID)) || {};
-
-    if (usedTokens[jwtToken as keyof typeof usedTokens]) {
+    if (
+      !(code in tokens) ||
+      !tokens[code] ||
+      tokens[code]?.expiresIn <= Date.now()
+    ) {
       return this.fail(
         {
-          message: "Token is already used",
+          message: "Token does not exist, is already used or is expired.",
         },
         400
       );
     }
 
-    Object.keys(usedTokens).forEach((token) => {
-      const expiration = usedTokens[token as keyof typeof usedTokens];
-      if (expiration <= Date.now()) {
-        delete usedTokens[token as keyof typeof usedTokens];
+    const user = tokens[code].user;
+
+    delete tokens[code];
+
+    Object.keys(tokens).forEach((token) => {
+      if (tokens[parseInt(token)].expiresIn <= Date.now()) {
+        delete tokens[parseInt(token)];
       }
     });
 
-    usedTokens[jwtToken as keyof typeof usedTokens] = exp;
+    await this.args.storage.set(userUID, tokens);
 
-    await this.args.storage.set(userUID, usedTokens);
-
-    return this.success(user);
+    return this.success(await this.verifyUser(user));
   }
 }
 
-export default MagicCodeStrategy;
+export { Options as AuthenticationOptions, MagicCodeStrategy as Strategy };
