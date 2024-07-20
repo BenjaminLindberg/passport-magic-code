@@ -18,13 +18,13 @@ export const ArgsSchema = z.object({
 
 export const SendCodeFunctionSchema = z
   .function()
-  .args(z.string(), z.number())
-  .returns(z.void().or(z.promise(z.void())));
+  .args(z.any(), z.number())
+  .returns(z.any().or(z.any().promise()));
 
 export const VerifyUserFunctionSchema = z
   .function()
   .args(z.any())
-  .returns(z.any().or(z.promise(z.any())));
+  .returns(z.any().or(z.any().promise()));
 
 export const StrategySchema = z.tuple([
   ArgsSchema,
@@ -116,7 +116,7 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
       10 ** this.args.codeLength - 1
     );
 
-    this.sendCode(user[this.args.userPrimaryKey], code);
+    this.sendCode(user, code);
 
     this.args.storage.set(user[this.args.userPrimaryKey], {
       ...(await this.args.storage.get(user[this.args.userPrimaryKey])),
@@ -126,7 +126,7 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
       },
     });
 
-    return this.pass();
+    return this.success(user);
   }
 
   async acceptCode(req: Request, options: Options) {
