@@ -126,7 +126,7 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
       },
     });
 
-    return this.success(user);
+    return user;
   }
 
   async acceptCode(req: Request, options: Options) {

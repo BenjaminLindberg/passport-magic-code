@@ -1,6 +1,6 @@
 {
   "name": "passport-magic-code",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "A passwordless passport strategy to send a magic code (One time password) to let the user authenticate themselves.",
   "keywords": [
     "Passport",
