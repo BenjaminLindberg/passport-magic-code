@@ -126,6 +126,7 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
       },
     });
 
+    this.pass();
     return user;
   }
 
