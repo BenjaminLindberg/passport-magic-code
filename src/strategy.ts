@@ -11,7 +11,7 @@ export const ArgsSchema = z.object({
   codeLength: z.number().gte(4).default(4),
   requiredFields: z.array(z.string()).default(["email"]),
   storage: MemoryStorageSchema.default(memoryStorage),
-  expiresIn: z.number().default(30) /* Miunutes */,
+  expiresIn: z.number().default(30) /* Minutes */,
   codeField: z.string().default("code"),
   userPrimaryKey: z.string().default("email"),
 });
@@ -118,12 +118,9 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
 
     this.sendCode(user, code);
 
-    this.args.storage.set(user[this.args.userPrimaryKey], {
-      ...(await this.args.storage.get(user[this.args.userPrimaryKey])),
-      [code.toString()]: {
-        expiresIn: (Date.now() + this.args.expiresIn * 60 * 1000) / 1,
-        user: user,
-      },
+    await this.args.storage.set(code.toString(), {
+      expiresIn: (Date.now() + this.args.expiresIn * 60 * 1000) / 1,
+      user: user,
     });
 
     this.pass();
@@ -156,51 +153,39 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
     )?.toString();
 
     if (!code) {
-      return this.fail(
-        {
-          message: "The code is missing.",
-        },
-        404
-      );
+      throw {
+        error: `Missing field: ${this.args.codeField}`,
+        message: `The code field (${this.args.codeField}) is missing.`,
+        statusCode: 400,
+      };
     }
 
     if (!userUID) {
-      return this.fail(
-        {
-          message: "The user primary key is missing.",
-        },
-        404
-      );
+      throw {
+        error: `Missing field: ${this.args.userPrimaryKey}`,
+        message: `The primary key (${this.args.userPrimaryKey}) is missing.`,
+        statusCode: 400,
+      };
     }
 
-    const tokens = (await this.args.storage.get(userUID)) || {};
+    const token = await this.args.storage.get(code);
 
     if (
-      !(code in tokens) ||
-      !tokens[code] ||
-      tokens[code]?.expiresIn <= Date.now()
+      !token ||
+      !(this.args.userPrimaryKey in token?.user) ||
+      !token?.user[this.args.userPrimaryKey as keyof typeof token.user] ||
+      token?.expiresIn <= Date.now()
     ) {
-      return this.fail(
-        {
-          message: "Token does not exist, is already used or is expired.",
-        },
-        400
-      );
+      throw {
+        error: "Invalid code",
+        message: "Code does not exist, is already used or is expired.",
+        statusCode: 400,
+      };
     }
 
-    const user = tokens[code].user;
+    await this.args.storage.delete(code);
 
-    delete tokens[code];
-
-    Object.keys(tokens).forEach((token) => {
-      if (tokens[parseInt(token)].expiresIn <= Date.now()) {
-        delete tokens[parseInt(token)];
-      }
-    });
-
-    await this.args.storage.set(userUID, tokens);
-
-    return this.success(await this.verifyUser(user));
+    return this.success(await this.verifyUser(token.user));
   }
 }
 
