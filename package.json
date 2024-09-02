@@ -1,6 +1,6 @@
 {
   "name": "passport-magic-code",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "A passwordless passport strategy to send a magic code (One time password) to let the user authenticate themselves.",
   "keywords": [
     "Passport",
@@ -28,9 +28,9 @@
   "private": false,
   "devDependencies": {
     "@jest/globals": "^29.7.0",
+    "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/passport-strategy": "^0.2.38",
-    "@types/express": "^4.17.21",
     "jest": "^29.7.0",
     "ts-jest": "^29.2.2",
     "ts-node": "^10.9.2",

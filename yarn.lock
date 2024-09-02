@@ -2082,6 +2082,13 @@ parse-json@^5.2.0:
     json-parse-even-better-errors "^2.3.0"
     lines-and-columns "^1.1.6"
 
+passport-magic-code@/home/benji/Documents/projects/passport-magic-code:
+  version "1.1.1"
+  dependencies:
+    jsonwebtoken "^9.0.2"
+    passport-strategy "^1.0.0"
+    zod "^3.23.8"
+
 passport-strategy@^1.0.0:
   version "1.0.0"
   resolved "https://registry.yarnpkg.com/passport-strategy/-/passport-strategy-1.0.0.tgz#b5539aa8fc225a3d1ad179476ddf236b440f52e4"

@@ -2,64 +2,65 @@ import { randomInt } from "crypto";
 import { Request } from "express";
 import PassportStrategy from "passport-strategy";
 import { z } from "zod";
-import { MemoryStorageSchema, memoryStorage } from "./memoryStorage";
+import { lookup } from "./helpers";
+import { MemoryStorageSchema, memoryStorage } from "./helpers/memoryStorage";
 
 export const ArgsSchema = z.object({
   secret: z.string().min(16, {
     message: "Secret must be at least 16 characters long",
   }),
   codeLength: z.number().gte(4).default(4),
-  requiredFields: z.array(z.string()).default(["email"]),
   storage: MemoryStorageSchema.default(memoryStorage),
   expiresIn: z.number().default(30) /* Minutes */,
   codeField: z.string().default("code"),
   userPrimaryKey: z.string().default("email"),
 });
 
-export const SendCodeFunctionSchema = z
+export const OptionsSchema = z.object({
+  action: z.enum(["callback", "login", "register"] as const),
+});
+
+export const SendCodeSchema = z
   .function()
-  .args(z.any(), z.number())
+  .args(z.any(), z.number(), OptionsSchema)
   .returns(z.any().or(z.any().promise()));
 
-export const VerifyUserFunctionSchema = z
+export const CallbackSchema = z
   .function()
-  .args(z.any())
+  .args(z.any(), OptionsSchema)
   .returns(z.any().or(z.any().promise()));
 
 export const StrategySchema = z.tuple([
   ArgsSchema,
-  SendCodeFunctionSchema,
-  VerifyUserFunctionSchema,
+  SendCodeSchema,
+  CallbackSchema,
 ]);
-
-export const OptionsSchema = z.object({
-  action: z.enum(["request", "accept"] as const),
-});
 
 const ArgTypeSchema = ArgsSchema.partial().required({
   secret: true,
 });
 
 export type Args = z.infer<typeof ArgTypeSchema>;
-export type SendCodeFunction = z.infer<typeof SendCodeFunctionSchema>;
-export type VerifyUserFunction = z.infer<typeof VerifyUserFunctionSchema>;
+export type SendCodeFunction = z.infer<typeof SendCodeSchema>;
+export type CallbackFunction = z.infer<typeof CallbackSchema>;
+
 export type Options = z.infer<typeof OptionsSchema>;
 
 class MagicCodeStrategy extends PassportStrategy.Strategy {
   name: string;
   args: z.infer<typeof ArgsSchema>;
   sendCode: SendCodeFunction;
-  verifyUser: VerifyUserFunction;
+  callback: CallbackFunction;
 
   constructor(
     args: Args,
     sendCode: SendCodeFunction,
-    verifyUser: VerifyUserFunction
+    callback: CallbackFunction
   ) {
     const parsedArguments = StrategySchema.safeParse([
       args,
       sendCode,
-      verifyUser,
+      callback,
     ]);
 
     if (!parsedArguments.success) {
@@ -71,7 +72,7 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
     this.name = "magic-code";
     this.args = parsedArguments.data[0];
     this.sendCode = parsedArguments.data[1];
-    this.verifyUser = parsedArguments.data[2];
+    this.callback = parsedArguments.data[2];
   }
 
   async authenticate(req: Request, options: Options) {
@@ -83,12 +84,12 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
 
     options = parsedOptions.data;
 
-    if (options.action === "request") {
-      return this.requestCode(req, options);
+    if (options.action === "callback") {
+      return this.acceptCode(req, options);
     }
 
-    if (options.action === "accept") {
-      return this.acceptCode(req, options);
+    if (options.action === "register" || options.action === "login") {
+      return this.requestCode(req, options);
     }
 
     return this.error(new Error("Unknown action"));
@@ -97,13 +98,7 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
   async requestCode(req: Request, options: Options) {
     const parsedBody = z
       .object({
-        ...this.args.requiredFields.concat([this.args.userPrimaryKey]).reduce(
-          (acc, cur) => ({
-            ...acc,
-            [cur]: z.any(),
-          }),
-          {}
-        ),
+        [this.args.userPrimaryKey]: z.string(),
       })
       .safeParse(req.body);
 
@@ -116,11 +111,21 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
       10 ** this.args.codeLength - 1
     );
 
-    this.sendCode(user, code);
+    /* Defined if error occured, else null */
+    const error = await this.sendCode(user, code, options);
+
+    if (error) {
+      throw error;
+    }
 
     await this.args.storage.set(code.toString(), {
       expiresIn: (Date.now() + this.args.expiresIn * 60 * 1000) / 1,
-      user: user,
+      user:
+        options.action === "register"
+          ? user
+          : {
+              [this.args.userPrimaryKey]: user[this.args.userPrimaryKey],
+            },
     });
 
     this.pass();
@@ -128,28 +133,14 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
   }
 
   async acceptCode(req: Request, options: Options) {
-    const code: string | undefined = (
-      (req.body &&
-        this.args.codeField in req.body &&
-        req.body[this.args.codeField]) ||
-      (req.query &&
-        this.args.codeField in req.query &&
-        req.query[this.args.codeField]) ||
-      (req.params &&
-        this.args.codeField in req.params &&
-        req.params[this.args.codeField])
+    const code = lookup(
+      [req.body, req.query, req.params],
+      this.args.codeField
     )?.toString();
 
-    const userUID: string | undefined = (
-      (req.body &&
-        this.args.userPrimaryKey in req.body &&
-        req.body[this.args.userPrimaryKey]) ||
-      (req.query &&
-        this.args.userPrimaryKey in req.query &&
-        req.query[this.args.userPrimaryKey]) ||
-      (req.params &&
-        this.args.userPrimaryKey in req.params &&
-        req.params[this.args.userPrimaryKey])
+    const userUID = lookup(
+      [req.body, req.query, req.params],
+      this.args.userPrimaryKey
     )?.toString();
 
     if (!code) {
@@ -159,7 +150,6 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
         statusCode: 400,
       };
     }
-
     if (!userUID) {
       throw {
         error: `Missing field: ${this.args.userPrimaryKey}`,
@@ -185,7 +175,7 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
 
     await this.args.storage.delete(code);
 
-    return this.success(await this.verifyUser(token.user));
+    return this.success(await this.callback(token.user, options));
   }
 }
 
