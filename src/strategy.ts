@@ -160,10 +160,14 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
 
     const token = await this.args.storage.get(code);
 
+    console.log(token?.user, userUID);
+
     if (
       !token ||
       !(this.args.userPrimaryKey in token?.user) ||
       !token?.user[this.args.userPrimaryKey as keyof typeof token.user] ||
+      token?.user[this.args.userPrimaryKey as keyof typeof token.user] !==
+        userUID ||
       token?.expiresIn <= Date.now()
     ) {
       throw {
