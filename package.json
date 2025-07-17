@@ -38,7 +38,9 @@
   },
   "dependencies": {
     "jsonwebtoken": "^9.0.2",
-    "passport-strategy": "^1.0.0",
+    "passport-strategy": "^1.0.0"
+  },
+  "peerDependencies": {
     "zod": "^3.23.8"
   }
 }
