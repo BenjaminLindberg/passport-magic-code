@@ -1,6 +1,6 @@
 {
   "name": "passport-magic-code",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "A passwordless passport strategy to send a magic code (One time password) to let the user authenticate themselves.",
   "keywords": [
     "Passport",
@@ -14,8 +14,8 @@
   ],
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
-    "watch": "tsc -w",
+    "build": "tsup",
+    "watch": "tsup -w",
     "dev": "jest",
     "test": "jest",
     "prepublish": "yarn build"
