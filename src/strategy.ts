@@ -1,9 +1,11 @@
 import { randomInt } from "crypto";
 import { Request } from "express";
 import PassportStrategy from "passport-strategy";
-import { z } from "zod";
+import { z, ZodObject, ZodRawShape } from "zod";
 import { lookup } from "./helpers";
-import { MemoryStorageSchema, memoryStorage } from "./helpers/memoryStorage";
+import { memoryStorage, MemoryStorageSchema } from "./helpers/memoryStorage";
+
+// The user supplies their own user schema.
 
 export const ArgsSchema = z.object({
   secret: z.string().min(16, {
@@ -14,35 +16,41 @@ export const ArgsSchema = z.object({
   expiresIn: z.number().default(30) /* Minutes */,
   codeField: z.string().default("code"),
   userPrimaryKey: z.string().default("email"),
+  userSchema: z.custom<ZodObject<ZodRawShape>>(),
 });
 
 export const OptionsSchema = z.object({
   action: z.enum(["callback", "login", "register"] as const),
 });
 
-export const SendCodeSchema = z
-  .function()
-  .args(z.any(), z.number(), OptionsSchema)
-  .returns(z.any().or(z.any().promise()));
+export const SendCodeSchema = (
+  userSchema: z.infer<typeof ArgsSchema.shape.userSchema>
+) =>
+  z
+    .function()
+    .args(userSchema, z.number(), OptionsSchema)
+    .returns(userSchema.or(userSchema.promise()));
 
-export const CallbackSchema = z
-  .function()
-  .args(z.any(), OptionsSchema)
-  .returns(z.any().or(z.any().promise()));
+export const CallbackSchema = (
+  userSchema: z.infer<typeof ArgsSchema.shape.userSchema>
+) =>
+  z
+    .function()
+    .args(userSchema, OptionsSchema)
+    .returns(userSchema.or(userSchema.promise()));
 
-export const StrategySchema = z.tuple([
-  ArgsSchema,
-  SendCodeSchema,
-  CallbackSchema,
-]);
+export const StrategySchema = (
+  userSchema: z.infer<typeof ArgsSchema.shape.userSchema>
+) =>
+  z.tuple([ArgsSchema, SendCodeSchema(userSchema), CallbackSchema(userSchema)]);
 
 const ArgTypeSchema = ArgsSchema.partial().required({
   secret: true,
 });
 
 export type Args = z.infer<typeof ArgTypeSchema>;
-export type SendCodeFunction = z.infer<typeof SendCodeSchema>;
-export type CallbackFunction = z.infer<typeof CallbackSchema>;
+export type SendCodeFunction = z.infer<ReturnType<typeof SendCodeSchema>>;
+export type CallbackFunction = z.infer<ReturnType<typeof CallbackSchema>>;
 
 export type Options = z.infer<typeof OptionsSchema>;
 
@@ -57,11 +65,9 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
     sendCode: SendCodeFunction,
     callback: CallbackFunction
   ) {
-    const parsedArguments = StrategySchema.safeParse([
-      args,
-      sendCode,
-      callback,
-    ]);
+    const parsedArguments = StrategySchema(
+      args.userSchema as ZodObject<ZodRawShape>
+    ).safeParse([args, sendCode, callback]);
 
     if (!parsedArguments.success) {
       throw new Error(parsedArguments.error.message);
@@ -104,7 +110,16 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
 
     if (!parsedBody.success) this.fail(parsedBody.error, 400);
 
-    let user = req.body;
+    let {
+      data: user,
+      success,
+      error: userParseError,
+    } = this.args.userSchema.safeParse(req.body);
+
+    if (!success || !user)
+      throw {
+        ...userParseError,
+      };
 
     const code = randomInt(
       10 ** (this.args.codeLength - 1),
@@ -160,8 +175,6 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
 
     const token = await this.args.storage.get(code);
 
-    console.log(token?.user, userUID);
-
     if (
       !token ||
       !(this.args.userPrimaryKey in token?.user) ||
@@ -179,7 +192,18 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
 
     await this.args.storage.delete(code);
 
-    return this.success(await this.callback(token.user, options));
+    const {
+      data: user,
+      success,
+      error,
+    } = this.args.userSchema.safeParse(token.user);
+
+    if (!success)
+      throw {
+        ...error,
+      };
+
+    return this.success(await this.callback(user, options));
   }
 }
 
