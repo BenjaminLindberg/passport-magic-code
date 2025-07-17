@@ -110,16 +110,7 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
 
     if (!parsedBody.success) this.fail(parsedBody.error, 400);
 
-    let {
-      data: user,
-      success,
-      error: userParseError,
-    } = this.args.userSchema.safeParse(req.body);
-
-    if (!success || !user)
-      throw {
-        ...userParseError,
-      };
+    let user = req.body;
 
     const code = randomInt(
       10 ** (this.args.codeLength - 1),
