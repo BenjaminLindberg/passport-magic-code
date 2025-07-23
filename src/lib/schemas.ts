@@ -1,3 +1,4 @@
+import { CallbackFunction, MemoryStorage, SendCodeFunction } from "src/types";
 import z from "zod";
 import { memoryStorage } from "./memoryStorage";
 
@@ -7,18 +8,9 @@ export const TokenSchema = z.object({
 });
 
 export const MemoryStorageSchema = z.object({
-  set: z.function({
-    input: [z.string(), TokenSchema.or(z.promise(TokenSchema))],
-  }),
-  get: z.function({
-    input: [z.string()],
-    output: TokenSchema.or(z.undefined()).or(
-      z.promise(TokenSchema.or(z.undefined()))
-    ),
-  }),
-  delete: z.function({
-    input: [z.string()],
-  }),
+  set: z.custom<MemoryStorage["set"]>(),
+  get: z.custom<MemoryStorage["get"]>(),
+  delete: z.custom<MemoryStorage["delete"]>(),
   codes: z.record(z.string(), TokenSchema).default({}),
 });
 
@@ -39,18 +31,11 @@ export const OptionsSchema = z.object({
   action: z.enum(["callback", "login", "register"] as const),
 });
 
-export const SendCodeSchema = z.function({
-  input: [z.any(), z.number(), OptionsSchema],
-  output: z.any(),
-});
-
-export const CallbackSchema = z.function({
-  input: [z.any(), OptionsSchema],
-  output: z.any(),
-});
+export const SendCodeSchema = z.custom<SendCodeFunction>();
+export const CallbackSchema = z.custom<CallbackFunction>();
 
 export const StrategySchema = z.tuple([
   ArgsSchema,
-  z.any(), // SendCodeSchema
-  z.any(), // CallbackSchema
+  SendCodeSchema, // SendCodeSchema
+  CallbackSchema, // CallbackSchema
 ]);
