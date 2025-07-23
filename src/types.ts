@@ -3,7 +3,10 @@ import { ArgsSchema, OptionsSchema, TokenSchema } from "./lib";
 
 export type Token = z.infer<typeof TokenSchema>;
 
-export type Args = z.output<typeof ArgsSchema> & {
+const _ArgsSchema = ArgsSchema.required({
+  secret: true,
+});
+export type Args = z.output<typeof _ArgsSchema> & {
   storage: MemoryStorage;
 };
 
@@ -21,8 +24,8 @@ export type CallbackFunction = (
 export type Options = z.infer<typeof OptionsSchema>;
 
 export type MemoryStorage = {
-  set: (key: string, value: Token) => Promise<void>;
+  set: (key: string, value: Token) => Promise<void | any>;
   get: (key: string) => Promise<Token | undefined>;
-  delete: (key: string) => Promise<void>;
+  delete: (key: string) => Promise<void | any>;
   codes: Record<string, z.infer<Token>>;
 };
