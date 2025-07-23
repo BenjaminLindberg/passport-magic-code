@@ -1,54 +1,15 @@
 import { randomInt } from "crypto";
 import { Request } from "express";
 import PassportStrategy from "passport-strategy";
+
 import { z } from "zod";
-import { lookup } from "./helpers";
-import { memoryStorage, MemoryStorageSchema } from "./helpers/memoryStorage";
-
-export const ArgsSchema = z.object({
-  secret: z.string().min(16, {
-    message: "Secret must be at least 16 characters long",
-  }),
-  codeLength: z.number().gte(4).default(4),
-  storage: MemoryStorageSchema.default(memoryStorage),
-  expiresIn: z.number().default(30) /* Minutes */,
-  codeField: z.string().default("code"),
-  userPrimaryKey: z.string().default("email"),
-});
-
-export const OptionsSchema = z.object({
-  action: z.enum(["callback", "login", "register"] as const),
-});
-
-export const SendCodeSchema = z
-  .function()
-  .args(z.any(), z.number(), OptionsSchema)
-  .returns(z.any().or(z.any().promise()));
-
-export const CallbackSchema = z
-  .function()
-  .args(z.any(), OptionsSchema)
-  .returns(z.any().or(z.any().promise()));
-
-export const StrategySchema = z.tuple([
-  ArgsSchema,
-  SendCodeSchema,
-  CallbackSchema,
-]);
-
-const ArgTypeSchema = ArgsSchema.partial().required({
-  secret: true,
-});
-
-export type Args = z.infer<typeof ArgTypeSchema>;
-export type SendCodeFunction = z.infer<typeof SendCodeSchema>;
-export type CallbackFunction = z.infer<typeof CallbackSchema>;
-
-export type Options = z.infer<typeof OptionsSchema>;
+import { lookup, OptionsSchema, StrategySchema } from "./lib";
+import { TestStrategySchema } from "./lib/testUtils";
+import { Args, CallbackFunction, Options, SendCodeFunction } from "./types";
 
 class MagicCodeStrategy extends PassportStrategy.Strategy {
   name: string;
-  args: z.infer<typeof ArgsSchema>;
+  args: Args;
   sendCode: SendCodeFunction;
   callback: CallbackFunction;
 
@@ -57,11 +18,10 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
     sendCode: SendCodeFunction,
     callback: CallbackFunction
   ) {
-    const parsedArguments = StrategySchema.safeParse([
-      args,
-      sendCode,
-      callback,
-    ]);
+    const isTest = process.env.NODE_ENV === "test";
+    const parsedArguments = (
+      isTest ? TestStrategySchema : StrategySchema
+    ).safeParse([args, sendCode, callback]);
 
     if (!parsedArguments.success) {
       throw new Error(parsedArguments.error.message);
@@ -70,11 +30,13 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
     super();
 
     this.name = "magic-code";
-    this.args = parsedArguments.data[0];
-    this.sendCode = parsedArguments.data[1];
-    this.callback = parsedArguments.data[2];
+    this.args = parsedArguments.data[0] as Args;
+    this.sendCode = parsedArguments.data[1] satisfies SendCodeFunction;
+    this.callback = parsedArguments.data[2] satisfies CallbackFunction;
   }
 
+  /* passport-strategy does not expect new express Request type from ^5.0.0 */
+  /* @ts-ignore */
   async authenticate(req: Request, options: Options) {
     const parsedOptions = OptionsSchema.safeParse(options);
 
@@ -118,6 +80,7 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
       throw error;
     }
 
+    /* await */
     await this.args.storage.set(code.toString(), {
       expiresIn: (Date.now() + this.args.expiresIn * 60 * 1000) / 1,
       user:
@@ -158,6 +121,7 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
       };
     }
 
+    /* await */
     const token = await this.args.storage.get(code);
 
     if (
@@ -175,6 +139,7 @@ class MagicCodeStrategy extends PassportStrategy.Strategy {
       };
     }
 
+    /* await */
     await this.args.storage.delete(code);
 
     return this.success(await this.callback(token.user, options));
